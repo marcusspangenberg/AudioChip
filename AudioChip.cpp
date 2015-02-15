@@ -1,15 +1,10 @@
 #include <assert.h>
 #include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include "AudioChip.h"
-
-#ifdef DEBUG
-#define ASSERT(x) assert(x)
-#else
-#define ASSERT(x)
-#endif
 
 
 namespace {
@@ -24,13 +19,13 @@ constexpr float envelopeFactorPerStep = 1.0f / static_cast<float>(envelopeMaxPar
 constexpr float envelopeTimePerStep = envelopeMaxStageTimeMs / static_cast<float>(envelopeMaxParameterValue + 1);
 
 
-constexpr float samplesToTimeMs(const uint32_t inNumSamples, const float inSampleRate) {
-	return static_cast<float>(inNumSamples) / (inSampleRate / 1000.0f);
+constexpr float samplesToTimeMs(const uint32_t inNumSamples, const uint32_t inSampleRate) {
+	return static_cast<float>(inNumSamples) / (static_cast<float>(inSampleRate) / 1000.0f);
 }
 
 
-constexpr float frequencyToPhaseIncrement(const float inFrequency, const float inSampleRate) {
-	return (pi2 * inFrequency) / inSampleRate;
+constexpr float calcAngularFrequencyPerSample(const float inFrequency, const uint32_t inSampleRate) {
+	return (pi2 * inFrequency) / static_cast<float>(inSampleRate);
 }
 
 
@@ -92,80 +87,35 @@ bool advanceEnvelope(AudioChip::Track::EnvelopeData& inEnvelope, const uint32_t 
 		}
 		break;
 	default:
-		ASSERT(0);
+		assert(0);
 	}
 
-	ASSERT(inEnvelope.currentFactor >= 0.0f && inEnvelope.currentFactor <= 1.0f);
+	assert(inEnvelope.currentFactor >= 0.0f && inEnvelope.currentFactor <= 1.0f);
 	return false;
 }
 
 
-float sineGenerator(const float phase, const float phaseIncrement, const float pulseWidthOffset) {
-	ASSERT(phase >= 0);
-	return sinf(phase);
+float sineGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+	assert(inAngularFreqPerSample >= 0);
+	return sinf(inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples));
 }
 
 
-inline float generateSimpleSquare(const float phase, const float pulseWidthOffset) {
-	ASSERT(phase >= 0);
-
-	if (pulseWidthOffset != 0.0f) {
-		const float piWithOffset = M_PI - pulseWidthOffset;
-
-		if (phase < piWithOffset) {
-			return 1.0f;
-		} else if (phase < (2.0f * piWithOffset)) {
-			return -1.0f;
-		} else {
-			return 0.0f;
-		}
-	} else {
-		if (phase < M_PI) {
-			return 1.0f;
-		} else {
-			return -1.0f;
-		}
-	}
+float squareGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+	assert(inAngularFreqPerSample >= 0);
+	const float phase = inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples);
+	return sinf(phase) + sinf(3.0f * phase) / 3.0f + sinf(5.0f * phase) / 5.0f + sinf(7.0f * phase) / 7.0f + sinf(9.0f * phase) / 9.0f;
 }
 
 
-// Based on http://www.martin-finke.de/blog/articles/audio-plugins-018-polyblep-oscillator/
-inline float calcPolyBlep(const float inT, const float inDt) {
-	float t = inT;
-	float dt = inDt;
-
-	if (t < dt) {
-		t /= dt;
-		return t + t - t * t - 1.0f;
-	} else if (t > 1.0f - dt) {
-		t = (t - 1.0f) / dt;
-		return t * t + t + t + 1.0f;
-	} else {
-		return 0.0f;
-	}
-}
-
-
-float squareGenerator(const float phase, const float phaseIncrement, const float pulseWidthOffset) {
-	const float t = phase / pi2;
-	const float dt = phaseIncrement / pi2;
-
-	float value = generateSimpleSquare(phase, pulseWidthOffset);
-	value += calcPolyBlep(t, dt);
-	value -= calcPolyBlep(fmodf(t + 0.5f, 1.0f), dt);
-
-	return value;
-}
-
-
-float noiseGenerator(const float /*phase*/, const float /*phaseIncrement*/, const float /*pulseWidthOffset*/) {
+float noiseGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
 	return -1.0f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) / 2.0f);
 }
 
 
-float sawGenerator(const float phase, const float /*phaseIncrement*/, const float /*pulseWidthOffset*/) {
-	ASSERT(phase >= 0);
-	return (phase / M_PI) - 1.0f;
+float sawGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+	assert(inAngularFreqPerSample >= 0);
+	return ((inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples)) / M_PI) - 1.0f;
 }
 
 
@@ -175,33 +125,34 @@ float sawGenerator(const float phase, const float /*phaseIncrement*/, const floa
 namespace AudioChip {
 
 
-AudioChip::AudioChip(const float inSampleRate, const uint32_t inNumTracks)
+AudioChip::AudioChip(const uint32_t inSampleRate, const uint32_t inNumTracks)
 	: sampleRate(inSampleRate),
+	  elapsedTimeInSamples(0),
 	  numTracks(inNumTracks)
 {
 	tracks.reserve(numTracks);
 
+	Track track;
+	track.envelope.attack = 0;
+	track.envelope.decay = 0;
+	track.envelope.sustain = envelopeMaxParameterValue;
+	track.envelope.release = 0;
+	track.envelope.currentFactor = 0.0f;
+	track.envelope.state = Track::EnvelopeData::State::Attack;
+	track.enabled = false;
+	track.angularFreqPerSample = calcAngularFrequencyPerSample(440.0f, sampleRate);
+	track.pwmPhase = 0.0f;
+	track.pwmPhaseIncrement = 0.0f;
+	track.generator = sineGenerator;
+
 	for (uint32_t i = 0; i < numTracks; ++i) {
-		Track track;
-		track.envelope.attack = 0;
-		track.envelope.decay = 0;
-		track.envelope.sustain = 126;
-		track.envelope.release = 0;
-		track.envelope.currentFactor = 0.0f;
-		track.envelope.state = Track::EnvelopeData::State::Attack;
-		track.enabled = false;
-		track.phase = 0.0f;
-		track.phaseIncrement = frequencyToPhaseIncrement(440.0f, sampleRate);
-		track.pwmPhase = 0.0f;
-		track.pwmPhaseIncrement = 0.0f;
-		track.generator = sineGenerator;
 		tracks.push_back(track);
 	}
 }
 
 
 void AudioChip::renderNextSamples(float* outBuffer, const uint32_t inNumSamples) {
-	ASSERT(outBuffer != nullptr);
+	assert(outBuffer != nullptr);
 
 	const uint32_t totalSamples = inNumSamples * numChannels;
 	memset(outBuffer, 0, totalSamples * sizeof(float));
@@ -223,54 +174,49 @@ void AudioChip::renderNextSamples(float* outBuffer, const uint32_t inNumSamples)
 			float pulseWidthOffset = 0.0f;
 
 			// PWM
-			if (track.phaseIncrement != 0.0f) {
-				pulseWidthOffset = (sineGenerator(track.pwmPhase, track.pwmPhaseIncrement, 0.0f) * M_PI) * track.pwmDepth;
+			/*if (track.pwmPhaseIncrement != 0.0f) {
+				pulseWidthOffset = (sineGenerator(track.pwmPhase, 0.0f) * M_PI) * track.pwmDepth;
 				track.pwmPhase += track.pwmPhaseIncrement;
 				if (track.pwmPhase >= pi2) {
 					track.pwmPhase -= pi2;
 				}
-			}
+			}*/
 
 			// Add track generator to mix
-			const float currentSampleData = track.generator(track.phase, track.phaseIncrement, pulseWidthOffset) * track.envelope.currentFactor;
+			const float currentSampleData = track.generator(track.angularFreqPerSample, elapsedTimeInSamples, pulseWidthOffset) * track.envelope.currentFactor;
 			outBuffer[sample] += currentSampleData;
 			outBuffer[sample + 1] += currentSampleData;
 
-			// Update generator phase
-			track.phase += track.phaseIncrement;
-			if (track.phase >= pi2) {
-				track.phase -= pi2;
-			}
+			elapsedTimeInSamples = (elapsedTimeInSamples + 1) % sampleRate;
 		}
 	}
 }
 
 
 void AudioChip::noteOn(const uint32_t inTrack) {
-	ASSERT(inTrack < numTracks);
+	assert(inTrack < numTracks);
 	tracks[inTrack].envelope.currentFactor = 0.0f;
 	tracks[inTrack].envelope.state = Track::EnvelopeData::State::Attack;
-	tracks[inTrack].phase = 0.0f;
 	tracks[inTrack].enabled = true;
 }
 
 
 void AudioChip::noteOff(const uint32_t inTrack) {
-	ASSERT(inTrack < numTracks);
+	assert(inTrack < numTracks);
 	tracks[inTrack].envelope.state = Track::EnvelopeData::State::Release;
 }
 
 
 void AudioChip::setFrequency(const uint32_t inTrack, const float inFrequency) {
-	ASSERT(inTrack < numTracks);
-	ASSERT(inFrequency > 0.0f);
+	assert(inTrack < numTracks);
+	assert(inFrequency > 0.0f);
 
-	tracks[inTrack].phaseIncrement = frequencyToPhaseIncrement(inFrequency, sampleRate);
+	tracks[inTrack].angularFreqPerSample = calcAngularFrequencyPerSample(inFrequency, sampleRate);
 }
 
 
 void AudioChip::setWaveformType(const uint32_t inTrack, const WaveformType inWaveformType) {
-	ASSERT(inTrack < numTracks);
+	assert(inTrack < numTracks);
 
 	switch (inWaveformType) {
 	case WaveformType::Sine:
@@ -286,18 +232,18 @@ void AudioChip::setWaveformType(const uint32_t inTrack, const WaveformType inWav
 		tracks[inTrack].generator = sawGenerator;
 		break;
 	default:
-		ASSERT(false);
+		assert(false);
 		break;
 	}
 }
 
 
 void AudioChip::setEnvelope(const uint32_t inTrack, const uint8_t inAttack, const uint8_t inDecay, const uint8_t inSustain, const uint8_t inRelease) {
-	ASSERT(inTrack < numTracks);
-	ASSERT(inAttack <= envelopeMaxParameterValue);
-	ASSERT(inDecay <= envelopeMaxParameterValue);
-	ASSERT(inSustain <= envelopeMaxParameterValue);
-	ASSERT(inRelease <= envelopeMaxParameterValue);
+	assert(inTrack < numTracks);
+	assert(inAttack <= envelopeMaxParameterValue);
+	assert(inDecay <= envelopeMaxParameterValue);
+	assert(inSustain <= envelopeMaxParameterValue);
+	assert(inRelease <= envelopeMaxParameterValue);
 
 	tracks[inTrack].envelope.attack = inAttack;
 	tracks[inTrack].envelope.decay = inDecay;
@@ -307,15 +253,15 @@ void AudioChip::setEnvelope(const uint32_t inTrack, const uint8_t inAttack, cons
 
 
 void AudioChip::enablePWM(const uint32_t inTrack, const float inFrequency, const float inPWMDepth) {
-	ASSERT(inTrack < numTracks);
-	ASSERT(inPWMDepth > 0.0f && inPWMDepth <= 1.0f);
-	tracks[inTrack].pwmPhaseIncrement = frequencyToPhaseIncrement(inFrequency, sampleRate);
+	assert(inTrack < numTracks);
+	assert(inPWMDepth > 0.0f && inPWMDepth <= 1.0f);
+	tracks[inTrack].pwmPhaseIncrement = calcAngularFrequencyPerSample(inFrequency, sampleRate);
 	tracks[inTrack].pwmDepth = inPWMDepth;
 }
 
 
 void AudioChip::disablePWM(const uint32_t inTrack) {
-	ASSERT(inTrack < numTracks);
+	assert(inTrack < numTracks);
 	tracks[inTrack].pwmPhaseIncrement = 0.0f;
 }
 

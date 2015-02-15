@@ -13,7 +13,7 @@ public:
 	enum class WaveformType {Sine, Square, Noise, Saw};
 
 	AudioChip() = delete;
-	AudioChip(const float inSampleRate, const uint32_t inNumTracks);
+	AudioChip(const uint32_t inSampleRate, const uint32_t inNumTracks);
 
 	/**
 		Write next inNumSamples rendered samples to outBuffer.
@@ -57,7 +57,8 @@ public:
 	void disablePWM(const uint32_t inTrack);
 
 private:
-	float sampleRate;
+	uint32_t sampleRate;
+	uint32_t elapsedTimeInSamples;
 	uint32_t numTracks;
 	std::vector<Track> tracks;
 };

@@ -12,7 +12,7 @@ namespace {
 const char* alsaDevice = "plughw:0,0";
 const uint32_t numChannels = 2;
 const uint32_t bufferSize = 256;
-const float sampleRate = 44100.0f;
+const uint32_t sampleRate = 44100;
 
 
 bool isRunning;
@@ -197,15 +197,15 @@ int main(int argc, char** argv) {
 	initAudio();
 
 	audioChip->setWaveformType(0, AudioChip::AudioChip::WaveformType::Square);
-	audioChip->setFrequency(0, 110.0f);
-	audioChip->enablePWM(0, 0.5f, 0.97f);
-	audioChip->setEnvelope(0, 20, 0, 90, 63);
+	audioChip->setFrequency(0, 220.0f);
+	//audioChip->enablePWM(0, 0.5f, 0.97f);
+	audioChip->setEnvelope(0, 5, 5, 100, 5);
 	audioChip->noteOn(0);
 
 	createThread(audioChip.get());
-	sleep(2);
+	sleep(5);
 
-	audioChip->setWaveformType(1, AudioChip::AudioChip::WaveformType::Saw);
+	/*audioChip->setWaveformType(1, AudioChip::AudioChip::WaveformType::Saw);
 	audioChip->setFrequency(1, 440.0f);
 	audioChip->setEnvelope(1, 0, 20, 63, 20);
 	audioChip->noteOn(1);
@@ -213,15 +213,16 @@ int main(int argc, char** argv) {
 	audioChip->setWaveformType(2, AudioChip::AudioChip::WaveformType::Saw);
 	audioChip->setFrequency(2, 220.0f);
 	audioChip->setEnvelope(2, 0, 20, 63, 20);
-	audioChip->noteOn(2);
+	audioChip->noteOn(2);*/
 
-	sleep(2);
+	//sleep(2);
 	audioChip->noteOff(0);
-	sleep(3);
+	sleep(1);
+	/*sleep(3);
 	audioChip->noteOff(0);
 
 	audioChip->noteOff(1);
-	audioChip->noteOff(2);
+	audioChip->noteOff(2);*/
 	stopAudio();
 	joinThread();
 
