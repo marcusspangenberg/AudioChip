@@ -141,14 +141,10 @@ void* startAudio(void* inThreadData) {
         while (framesToWrite > 0) {
         	ssize_t framesWritten = snd_pcm_writei(outputDevice, outputBuffer, framesToWrite);
 
-            if (framesWritten == -EAGAIN || (framesWritten >= 0 && framesWritten < framesToWrite)) {
-                // Do nothing
-            } else if (framesWritten == -EPIPE) {
+            if (framesWritten == -EPIPE) {
             	handleXRun(outputDevice);
-            } else if (framesWritten == -ESTRPIPE) {
-                assert(0);
-            } else if (framesWritten < 0) {
-                assert(0);
+            } else if (framesWritten < 0 && framesWritten != -EAGAIN) {
+                assert(false);
             }
 
             if (framesWritten > 0) {
@@ -197,13 +193,13 @@ int main(int argc, char** argv) {
 	initAudio();
 
 	audioChip->setWaveformType(0, AudioChip::AudioChip::WaveformType::Square);
-	audioChip->setFrequency(0, 220.0f);
+	audioChip->setFrequency(0, 440.0f);
 	//audioChip->enablePWM(0, 0.5f, 0.97f);
 	audioChip->setEnvelope(0, 5, 5, 100, 5);
 	audioChip->noteOn(0);
 
 	createThread(audioChip.get());
-	sleep(5);
+	sleep(2);
 
 	/*audioChip->setWaveformType(1, AudioChip::AudioChip::WaveformType::Saw);
 	audioChip->setFrequency(1, 440.0f);
@@ -227,5 +223,5 @@ int main(int argc, char** argv) {
 	joinThread();
 
 	disposeAudio();
-	exit(0);
+	return 0;
 }

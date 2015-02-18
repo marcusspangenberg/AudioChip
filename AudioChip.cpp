@@ -5,9 +5,13 @@
 #include <cstdio>
 #include <cstring>
 #include "AudioChip.h"
+#include "SineTable.h"
 
 
 namespace {
+
+
+AudioChip::SineTable sineTable;
 
 
 const uint32_t envelopeMaxParameterValue = 126;
@@ -26,6 +30,18 @@ constexpr float samplesToTimeMs(const uint32_t inNumSamples, const uint32_t inSa
 
 constexpr float calcAngularFrequencyPerSample(const float inFrequency, const uint32_t inSampleRate) {
 	return (pi2 * inFrequency) / static_cast<float>(inSampleRate);
+}
+
+
+uint32_t calcHighestSubharmonic(const float inFrequency, const uint32_t inSampleRate) {
+	const float halfSampleRate = inSampleRate / 2;
+
+	uint32_t highestSubharmonic = 1;
+	while ((inFrequency * static_cast<float>(highestSubharmonic)) < halfSampleRate) {
+		++highestSubharmonic;
+	}
+
+	return highestSubharmonic - 1;
 }
 
 
@@ -95,27 +111,42 @@ bool advanceEnvelope(AudioChip::Track::EnvelopeData& inEnvelope, const uint32_t 
 }
 
 
-float sineGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+float sineGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
 	assert(inAngularFreqPerSample >= 0);
-	return sinf(inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples));
+	return sineTable.lookupSinf(inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples));
 }
 
 
-float squareGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+float squareGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
 	assert(inAngularFreqPerSample >= 0);
 	const float phase = inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples);
-	return sinf(phase) + sinf(3.0f * phase) / 3.0f + sinf(5.0f * phase) / 5.0f + sinf(7.0f * phase) / 7.0f + sinf(9.0f * phase) / 9.0f;
+
+	float outSample = 0.0f;
+	for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; freqMultiplier += 2) {
+		const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
+		outSample += sineTable.lookupSinf(phase * freqMultiplierFloat) / freqMultiplierFloat;
+	}
+
+	return outSample;
 }
 
 
-float noiseGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+float noiseGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
 	return -1.0f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) / 2.0f);
 }
 
 
-float sawGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const float inPulseWidthOffset) {
+float sawGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
 	assert(inAngularFreqPerSample >= 0);
-	return ((inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples)) / M_PI) - 1.0f;
+	const float phase = inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples);
+
+	float outSample = 0.0f;
+	for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; ++freqMultiplier) {
+		const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
+		outSample += sineTable.lookupSinf(phase * freqMultiplierFloat) / freqMultiplierFloat;
+	}
+
+	return outSample;
 }
 
 
@@ -141,6 +172,7 @@ AudioChip::AudioChip(const uint32_t inSampleRate, const uint32_t inNumTracks)
 	track.envelope.state = Track::EnvelopeData::State::Attack;
 	track.enabled = false;
 	track.angularFreqPerSample = calcAngularFrequencyPerSample(440.0f, sampleRate);
+	track.highestSubharmonic = calcHighestSubharmonic(440.0f, sampleRate);
 	track.pwmPhase = 0.0f;
 	track.pwmPhaseIncrement = 0.0f;
 	track.generator = sineGenerator;
@@ -183,7 +215,7 @@ void AudioChip::renderNextSamples(float* outBuffer, const uint32_t inNumSamples)
 			}*/
 
 			// Add track generator to mix
-			const float currentSampleData = track.generator(track.angularFreqPerSample, elapsedTimeInSamples, pulseWidthOffset) * track.envelope.currentFactor;
+			const float currentSampleData = track.generator(track.angularFreqPerSample, elapsedTimeInSamples, track.highestSubharmonic, pulseWidthOffset) * track.envelope.currentFactor;
 			outBuffer[sample] += currentSampleData;
 			outBuffer[sample + 1] += currentSampleData;
 
@@ -212,6 +244,7 @@ void AudioChip::setFrequency(const uint32_t inTrack, const float inFrequency) {
 	assert(inFrequency > 0.0f);
 
 	tracks[inTrack].angularFreqPerSample = calcAngularFrequencyPerSample(inFrequency, sampleRate);
+	tracks[inTrack].highestSubharmonic = calcHighestSubharmonic(inFrequency, sampleRate);
 }
 
 
