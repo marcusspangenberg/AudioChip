@@ -193,32 +193,16 @@ int main(int argc, char** argv) {
 	initAudio();
 
 	audioChip->setWaveformType(0, AudioChip::AudioChip::WaveformType::Square);
-	audioChip->setFrequency(0, 440.0f);
-	//audioChip->enablePWM(0, 0.5f, 0.97f);
+	audioChip->setFrequency(0, 100.0f);
+	audioChip->enablePWM(0, 0.2f, 0.9f);
 	audioChip->setEnvelope(0, 5, 5, 100, 5);
 	audioChip->noteOn(0);
 
 	createThread(audioChip.get());
 	sleep(2);
-
-	/*audioChip->setWaveformType(1, AudioChip::AudioChip::WaveformType::Saw);
-	audioChip->setFrequency(1, 440.0f);
-	audioChip->setEnvelope(1, 0, 20, 63, 20);
-	audioChip->noteOn(1);
-
-	audioChip->setWaveformType(2, AudioChip::AudioChip::WaveformType::Saw);
-	audioChip->setFrequency(2, 220.0f);
-	audioChip->setEnvelope(2, 0, 20, 63, 20);
-	audioChip->noteOn(2);*/
-
-	//sleep(2);
 	audioChip->noteOff(0);
 	sleep(1);
-	/*sleep(3);
-	audioChip->noteOff(0);
 
-	audioChip->noteOff(1);
-	audioChip->noteOff(2);*/
 	stopAudio();
 	joinThread();
 

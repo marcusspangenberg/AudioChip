@@ -28,20 +28,24 @@ constexpr float samplesToTimeMs(const uint32_t inNumSamples, const uint32_t inSa
 }
 
 
-constexpr float calcAngularFrequencyPerSample(const float inFrequency, const uint32_t inSampleRate) {
-	return (pi2 * inFrequency) / static_cast<float>(inSampleRate);
-}
-
-
 uint32_t calcHighestSubharmonic(const float inFrequency, const uint32_t inSampleRate) {
-	const float halfSampleRate = inSampleRate / 2;
+	const float halfSampleRate = inSampleRate / 2.0f;
 
 	uint32_t highestSubharmonic = 1;
 	while ((inFrequency * static_cast<float>(highestSubharmonic)) < halfSampleRate) {
 		++highestSubharmonic;
 	}
-
 	return highestSubharmonic - 1;
+}
+
+
+constexpr float calcPeriodTimeInSamples(const float inFrequency, const uint32_t inSampleRate) {
+	return (1.0f / inFrequency) * static_cast<float>(inSampleRate);
+}
+
+
+constexpr float frequencyToPhaseIncrement(const float inFrequency, const float inSampleRate) {
+	return (pi2 * inFrequency) / inSampleRate;
 }
 
 
@@ -111,39 +115,59 @@ bool advanceEnvelope(AudioChip::Track::EnvelopeData& inEnvelope, const uint32_t 
 }
 
 
-float sineGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
-	assert(inAngularFreqPerSample >= 0);
-	return sineTable.lookupSinf(inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples));
+float sineGenerator(const float inPhase, const uint32_t /*inHighestSubharmonic*/, const float /*inPWMPhaseOffset*/) {
+	assert(inPhase >= 0.0f);
+	return sineTable.lookupSinf(inPhase);
 }
 
 
-float squareGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
-	assert(inAngularFreqPerSample >= 0);
-	const float phase = inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples);
+float squareGenerator(const float inPhase, const uint32_t inHighestSubharmonic, const float inPWMPhaseOffset) {
+	assert(inPhase >= 0.0f);
 
 	float outSample = 0.0f;
-	for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; freqMultiplier += 2) {
-		const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
-		outSample += sineTable.lookupSinf(phase * freqMultiplierFloat) / freqMultiplierFloat;
+
+	if (inPWMPhaseOffset == 0.0f) {
+		for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; freqMultiplier += 2) {
+			const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
+			outSample += sineTable.lookupSinf(inPhase * freqMultiplierFloat) / freqMultiplierFloat;
+		}
+	} else {
+		float saw1Sample = 0.0f;
+		float saw2Sample = 0.0f;
+
+		const float offsetPhase = inPhase + inPWMPhaseOffset;
+
+		for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; ++freqMultiplier) {
+			const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
+			saw1Sample += sineTable.lookupSinf(inPhase * freqMultiplierFloat) / freqMultiplierFloat;
+		}
+
+		for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; freqMultiplier += 2) {
+			const float freq1MultiplierFloat = static_cast<float>(freqMultiplier);
+			const float freq2MultiplierFloat = static_cast<float>(freqMultiplier + 1);
+			saw2Sample -= sineTable.lookupSinf(offsetPhase * freq1MultiplierFloat) / freq1MultiplierFloat;
+			saw2Sample += sineTable.lookupSinf(offsetPhase * freq2MultiplierFloat) / freq2MultiplierFloat;
+		}
+
+		outSample = saw1Sample - saw2Sample;
 	}
 
 	return outSample;
 }
 
 
-float noiseGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
+float noiseGenerator(const float /*inPhase*/, const uint32_t /*inHighestSubharmonic*/, const float /*inPWMPhaseOffset*/) {
 	return -1.0f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) / 2.0f);
 }
 
 
-float sawGenerator(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset) {
-	assert(inAngularFreqPerSample >= 0);
-	const float phase = inAngularFreqPerSample * static_cast<float>(inElapsedTimeInSamples);
+float sawGenerator(const float inPhase, const uint32_t inHighestSubharmonic, const float /*inPWMPhaseOffset*/) {
+	assert(inPhase >= 0.0f);
 
 	float outSample = 0.0f;
 	for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; ++freqMultiplier) {
 		const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
-		outSample += sineTable.lookupSinf(phase * freqMultiplierFloat) / freqMultiplierFloat;
+		outSample += sineTable.lookupSinf(inPhase * freqMultiplierFloat) / freqMultiplierFloat;
 	}
 
 	return outSample;
@@ -158,10 +182,9 @@ namespace AudioChip {
 
 AudioChip::AudioChip(const uint32_t inSampleRate, const uint32_t inNumTracks)
 	: sampleRate(inSampleRate),
-	  elapsedTimeInSamples(0),
 	  numTracks(inNumTracks)
 {
-	tracks.reserve(numTracks);
+	const float initFrequency = 440.0f;
 
 	Track track;
 	track.envelope.attack = 0;
@@ -171,12 +194,18 @@ AudioChip::AudioChip(const uint32_t inSampleRate, const uint32_t inNumTracks)
 	track.envelope.currentFactor = 0.0f;
 	track.envelope.state = Track::EnvelopeData::State::Attack;
 	track.enabled = false;
-	track.angularFreqPerSample = calcAngularFrequencyPerSample(440.0f, sampleRate);
-	track.highestSubharmonic = calcHighestSubharmonic(440.0f, sampleRate);
+
+	track.phase = 0.0f;
+	track.phaseIncrement = frequencyToPhaseIncrement(initFrequency, sampleRate);
+	track.highestSubharmonic = calcHighestSubharmonic(initFrequency, sampleRate);
+
 	track.pwmPhase = 0.0f;
 	track.pwmPhaseIncrement = 0.0f;
+	track.pwmDepth = 0.0f;
+
 	track.generator = sineGenerator;
 
+	tracks.reserve(numTracks);
 	for (uint32_t i = 0; i < numTracks; ++i) {
 		tracks.push_back(track);
 	}
@@ -203,23 +232,28 @@ void AudioChip::renderNextSamples(float* outBuffer, const uint32_t inNumSamples)
 		}
 
 		for (uint32_t sample = 0; sample < totalSamples; sample += numChannels) {
-			float pulseWidthOffset = 0.0f;
-
 			// PWM
-			/*if (track.pwmPhaseIncrement != 0.0f) {
-				pulseWidthOffset = (sineGenerator(track.pwmPhase, 0.0f) * M_PI) * track.pwmDepth;
+			float pwmPhaseOffset = 0.0f;
+			if (track.pwmDepth != 0.0f) {
+				const float pwmFactor = sineGenerator(track.pwmPhase, 1, 0.0f) * track.pwmDepth;
+				pwmPhaseOffset = pwmFactor * M_PI;
+
 				track.pwmPhase += track.pwmPhaseIncrement;
 				if (track.pwmPhase >= pi2) {
 					track.pwmPhase -= pi2;
 				}
-			}*/
+			}
 
 			// Add track generator to mix
-			const float currentSampleData = track.generator(track.angularFreqPerSample, elapsedTimeInSamples, track.highestSubharmonic, pulseWidthOffset) * track.envelope.currentFactor;
+			const float currentSampleData = track.generator(track.phase, track.highestSubharmonic, pwmPhaseOffset) * track.envelope.currentFactor;
 			outBuffer[sample] += currentSampleData;
 			outBuffer[sample + 1] += currentSampleData;
 
-			elapsedTimeInSamples = (elapsedTimeInSamples + 1) % sampleRate;
+			// Update track phase
+			track.phase += track.phaseIncrement;
+			if (track.phase >= pi2) {
+				track.phase -= pi2;
+			}
 		}
 	}
 }
@@ -243,7 +277,8 @@ void AudioChip::setFrequency(const uint32_t inTrack, const float inFrequency) {
 	assert(inTrack < numTracks);
 	assert(inFrequency > 0.0f);
 
-	tracks[inTrack].angularFreqPerSample = calcAngularFrequencyPerSample(inFrequency, sampleRate);
+	tracks[inTrack].phase = 0.0f;
+	tracks[inTrack].phaseIncrement = frequencyToPhaseIncrement(inFrequency, sampleRate);
 	tracks[inTrack].highestSubharmonic = calcHighestSubharmonic(inFrequency, sampleRate);
 }
 
@@ -288,14 +323,16 @@ void AudioChip::setEnvelope(const uint32_t inTrack, const uint8_t inAttack, cons
 void AudioChip::enablePWM(const uint32_t inTrack, const float inFrequency, const float inPWMDepth) {
 	assert(inTrack < numTracks);
 	assert(inPWMDepth > 0.0f && inPWMDepth <= 1.0f);
-	tracks[inTrack].pwmPhaseIncrement = calcAngularFrequencyPerSample(inFrequency, sampleRate);
+	tracks[inTrack].pwmPhase = 0.0f;
+	tracks[inTrack].pwmPhaseIncrement = frequencyToPhaseIncrement(inFrequency, sampleRate);
 	tracks[inTrack].pwmDepth = inPWMDepth;
+
 }
 
 
 void AudioChip::disablePWM(const uint32_t inTrack) {
 	assert(inTrack < numTracks);
-	tracks[inTrack].pwmPhaseIncrement = 0.0f;
+	tracks[inTrack].pwmDepth = 0.0f;
 }
 
 

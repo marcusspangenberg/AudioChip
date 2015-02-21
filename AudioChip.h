@@ -58,7 +58,6 @@ public:
 
 private:
 	uint32_t sampleRate;
-	uint32_t elapsedTimeInSamples;
 	uint32_t numTracks;
 	std::vector<Track> tracks;
 };

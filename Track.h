@@ -18,17 +18,19 @@ struct Track {
 		enum State state;
 	};
 
-	typedef float (*waveformGenerator)(const float inAngularFreqPerSample, const uint32_t inElapsedTimeInSamples, const uint32_t inHighestSubharmonic, const float inPulseWidthOffset);
+	typedef float (*waveformGenerator)(const float inPhase, const uint32_t inHighestSubharmonic, const float inPWMPhaseOffset);
 
 	EnvelopeData envelope;
 	bool enabled;
 
-	float angularFreqPerSample;
+	float phase;
+	float phaseIncrement;
 	uint32_t highestSubharmonic;
 
 	float pwmPhase;
 	float pwmPhaseIncrement;
 	float pwmDepth;
+
 	waveformGenerator generator;
 };
 
