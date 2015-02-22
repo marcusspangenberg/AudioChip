@@ -39,79 +39,8 @@ uint32_t calcHighestSubharmonic(const float inFrequency, const uint32_t inSample
 }
 
 
-constexpr float calcPeriodTimeInSamples(const float inFrequency, const uint32_t inSampleRate) {
-	return (1.0f / inFrequency) * static_cast<float>(inSampleRate);
-}
-
-
 constexpr float frequencyToPhaseIncrement(const float inFrequency, const float inSampleRate) {
 	return (pi2 * inFrequency) / inSampleRate;
-}
-
-
-bool advanceEnvelope(AudioChip::Track::EnvelopeData& inEnvelope, const uint32_t inAdvanceSamples, const float inSampleRate) {
-	using namespace AudioChip;
-
-	float factorPerMs = 0.0f;
-
-	const float elapsedTimeMs = samplesToTimeMs(inAdvanceSamples, inSampleRate);
-
-	switch (inEnvelope.state) {
-	case Track::EnvelopeData::State::Attack:
-		if (inEnvelope.attack == 0) {
-			factorPerMs = 1.0f;
-		} else {
-			factorPerMs = 1.0f / (envelopeTimePerStep * inEnvelope.attack);
-		}
-		inEnvelope.currentFactor += factorPerMs * elapsedTimeMs;
-		if (inEnvelope.currentFactor >= 1.0f) {
-			inEnvelope.currentFactor = 1.0f;
-			inEnvelope.state = Track::EnvelopeData::State::Decay;
-		}
-		break;
-	case Track::EnvelopeData::State::Decay:
-		if (inEnvelope.decay == 0) {
-			factorPerMs = 1.0f;
-		} else {
-			factorPerMs = 1.0f / (envelopeTimePerStep * inEnvelope.decay);
-		}
-
-		inEnvelope.currentFactor -= factorPerMs * elapsedTimeMs;
-		{
-			const float sustainFactor = inEnvelope.sustain * envelopeFactorPerStep;
-			if (inEnvelope.currentFactor <= sustainFactor) {
-				inEnvelope.currentFactor = sustainFactor;
-				inEnvelope.state = Track::EnvelopeData::State::Sustain;
-			}
-		}
-		break;
-	case Track::EnvelopeData::State::Sustain:
-		if (inEnvelope.sustain == envelopeMaxParameterValue) {
-			inEnvelope.currentFactor = 1.0f;
-		} else {
-			inEnvelope.currentFactor = inEnvelope.sustain * envelopeFactorPerStep;
-		}
-		break;
-	case Track::EnvelopeData::State::Release:
-		if (inEnvelope.release == 0) {
-			inEnvelope.currentFactor = 0.0f;
-			return true;
-		} else {
-			factorPerMs = 1.0f / (envelopeTimePerStep * inEnvelope.release);
-
-			inEnvelope.currentFactor -= factorPerMs * elapsedTimeMs;
-			if (inEnvelope.currentFactor <= 0.0f) {
-				inEnvelope.currentFactor = 0.0f;
-				return true;
-			}
-		}
-		break;
-	default:
-		assert(0);
-	}
-
-	assert(inEnvelope.currentFactor >= 0.0f && inEnvelope.currentFactor <= 1.0f);
-	return false;
 }
 
 
@@ -218,14 +147,14 @@ void AudioChip::renderNextSamples(float* outBuffer, const uint32_t inNumSamples)
 	const uint32_t totalSamples = inNumSamples * numChannels;
 	memset(outBuffer, 0, totalSamples * sizeof(float));
 
-	for (uint32_t trackNum = 0; trackNum < numTracks; trackNum++) {
+	for (uint32_t trackNum = 0; trackNum < numTracks; ++trackNum) {
 		Track& track = tracks[trackNum];
 
 		if (!track.enabled) {
 			continue;
 		}
 
-		const bool noteEnded = advanceEnvelope(track.envelope, inNumSamples, sampleRate);
+		const bool noteEnded = advanceEnvelope(trackNum, inNumSamples);
 		if (noteEnded) {
 			track.enabled = false;
 			continue;
@@ -333,6 +262,72 @@ void AudioChip::enablePWM(const uint32_t inTrack, const float inFrequency, const
 void AudioChip::disablePWM(const uint32_t inTrack) {
 	assert(inTrack < numTracks);
 	tracks[inTrack].pwmDepth = 0.0f;
+}
+
+
+bool AudioChip::advanceEnvelope(const uint32_t inTrack, const uint32_t inAdvanceSamples) {
+	assert(inTrack < numTracks);
+
+	const float elapsedTimeMs = samplesToTimeMs(inAdvanceSamples, sampleRate);
+	Track::EnvelopeData& envelope = tracks[inTrack].envelope;
+	float factorPerMs = 0.0f;
+
+	switch (envelope.state) {
+	case Track::EnvelopeData::State::Attack:
+		if (envelope.attack == 0) {
+			factorPerMs = 1.0f;
+		} else {
+			factorPerMs = 1.0f / (envelopeTimePerStep * envelope.attack);
+		}
+		envelope.currentFactor += factorPerMs * elapsedTimeMs;
+		if (envelope.currentFactor >= 1.0f) {
+			envelope.currentFactor = 1.0f;
+			envelope.state = Track::EnvelopeData::State::Decay;
+		}
+		break;
+	case Track::EnvelopeData::State::Decay:
+		if (envelope.decay == 0) {
+			factorPerMs = 1.0f;
+		} else {
+			factorPerMs = 1.0f / (envelopeTimePerStep * envelope.decay);
+		}
+
+		envelope.currentFactor -= factorPerMs * elapsedTimeMs;
+		{
+			const float sustainFactor = envelope.sustain * envelopeFactorPerStep;
+			if (envelope.currentFactor <= sustainFactor) {
+				envelope.currentFactor = sustainFactor;
+				envelope.state = Track::EnvelopeData::State::Sustain;
+			}
+		}
+		break;
+	case Track::EnvelopeData::State::Sustain:
+		if (envelope.sustain == envelopeMaxParameterValue) {
+			envelope.currentFactor = 1.0f;
+		} else {
+			envelope.currentFactor = envelope.sustain * envelopeFactorPerStep;
+		}
+		break;
+	case Track::EnvelopeData::State::Release:
+		if (envelope.release == 0) {
+			envelope.currentFactor = 0.0f;
+			return true;
+		} else {
+			factorPerMs = 1.0f / (envelopeTimePerStep * envelope.release);
+
+			envelope.currentFactor -= factorPerMs * elapsedTimeMs;
+			if (envelope.currentFactor <= 0.0f) {
+				envelope.currentFactor = 0.0f;
+				return true;
+			}
+		}
+		break;
+	default:
+		assert(0);
+	}
+
+	assert(envelope.currentFactor >= 0.0f && envelope.currentFactor <= 1.0f);
+	return false;
 }
 
 

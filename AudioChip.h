@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <vector>
-#include "Track.h"
 
 
 namespace AudioChip {
@@ -57,6 +56,36 @@ public:
 	void disablePWM(const uint32_t inTrack);
 
 private:
+	typedef float (*waveformGenerator)(const float inPhase, const uint32_t inHighestSubharmonic, const float inPWMPhaseOffset);
+
+	struct Track {
+		struct EnvelopeData {
+			enum class State {Attack, Decay, Sustain, Release};
+
+			uint8_t attack;
+			uint8_t decay;
+			uint8_t sustain;
+			uint8_t release;
+			float currentFactor;
+			enum State state;
+		};
+
+		EnvelopeData envelope;
+		bool enabled;
+
+		float phase;
+		float phaseIncrement;
+		uint32_t highestSubharmonic;
+
+		float pwmPhase;
+		float pwmPhaseIncrement;
+		float pwmDepth;
+
+		waveformGenerator generator;
+	};
+
+	bool advanceEnvelope(const uint32_t inTrack, const uint32_t inAdvanceSamples);
+
 	uint32_t sampleRate;
 	uint32_t numTracks;
 	std::vector<Track> tracks;
