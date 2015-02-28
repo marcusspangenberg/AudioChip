@@ -15,7 +15,7 @@ public:
 	AudioChip(const uint32_t inSampleRate, const uint32_t inNumTracks);
 
 	/**
-		Write next inNumSamples rendered samples to outBuffer.
+		Render inNumSamples samples to outBuffer.
 	*/
 	void renderNextSamples(float* outBuffer, const uint32_t inNumSamples);
 

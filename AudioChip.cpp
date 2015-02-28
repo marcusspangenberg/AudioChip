@@ -66,18 +66,23 @@ float squareGenerator(const float inPhase, const uint32_t inHighestSubharmonic, 
 
 		const float offsetPhase = inPhase + inPWMPhaseOffset;
 
+		// Saw
 		for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; ++freqMultiplier) {
 			const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
 			saw1Sample += sineTable.lookupSinf(inPhase * freqMultiplierFloat) / freqMultiplierFloat;
 		}
 
+		// Inverted saw
 		for (uint32_t freqMultiplier = 1; freqMultiplier <= inHighestSubharmonic; freqMultiplier += 2) {
-			const float freq1MultiplierFloat = static_cast<float>(freqMultiplier);
-			const float freq2MultiplierFloat = static_cast<float>(freqMultiplier + 1);
-			saw2Sample -= sineTable.lookupSinf(offsetPhase * freq1MultiplierFloat) / freq1MultiplierFloat;
-			saw2Sample += sineTable.lookupSinf(offsetPhase * freq2MultiplierFloat) / freq2MultiplierFloat;
+			const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
+			saw2Sample -= sineTable.lookupSinf(offsetPhase * freqMultiplierFloat) / freqMultiplierFloat;
+		}
+		for (uint32_t freqMultiplier = 2; freqMultiplier <= inHighestSubharmonic; freqMultiplier += 2) {
+			const float freqMultiplierFloat = static_cast<float>(freqMultiplier);
+			saw2Sample += sineTable.lookupSinf(offsetPhase * freqMultiplierFloat) / freqMultiplierFloat;
 		}
 
+		// Pulse wave
 		outSample = saw1Sample - saw2Sample;
 	}
 
